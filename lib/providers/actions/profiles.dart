@@ -252,11 +252,7 @@ class ProfilesAction extends _$ProfilesAction {
       profileId: merged.id,
     );
     ref.read(currentProfileIdProvider.notifier).value = merged.id;
-    unawaited(
-      ref
-          .read(setupActionProvider.notifier)
-          .applyProfileDebounce(silence: true),
-    );
+    ref.read(setupActionProvider.notifier).applyProfileDebounce(silence: true);
     return merged;
   }
 
