@@ -81,10 +81,16 @@ jobs:
       - name: Fetch CA certificates
         run: |
           bundle=core/Clash.Meta/component/ca/ca-certificates.crt
-          curl -fsSL --retry 3 -o "$bundle" https://curl.se/ca/cacert.pem
-          count=$(grep -c 'BEGIN CERTIFICATE' "$bundle")
+          mkdir -p "$(dirname "$bundle")"
+          tmp="$RUNNER_TEMP/cacert.pem"
+          curl -fsSL --retry 5 --retry-all-errors --retry-delay 2 -o "$tmp" \
+            https://curl.se/ca/cacert.pem || \
+            python3 -c "import ssl,urllib.request,shutil;shutil.copyfileobj(urllib.request.urlopen('https://curl.se/ca/cacert.pem'),open('$tmp','wb'))"
+          count=$(grep -c 'BEGIN CERTIFICATE' "$tmp")
           echo "$count CA certificates"
           test "$count" -ge 100
+          cp "$tmp" "$bundle"
+          wc -c "$bundle"
 
       - name: Flutter dependencies
         run: flutter pub get
