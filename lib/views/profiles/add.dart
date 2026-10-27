@@ -119,6 +119,16 @@ class AddProfileView extends ConsumerWidget {
     }
   }
 
+  void _toMerge(BuildContext context) {
+    showExtend(
+      context,
+      builder: (context) => CommonScaffold(
+        title: '聚合订阅',
+        body: _MergeSubscriptionForm(origin: origin),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final appLocalizations = context.appLocalizations;
@@ -148,6 +158,132 @@ class AddProfileView extends ConsumerWidget {
           title: Text(appLocalizations.customProfile),
           subtitle: Text(appLocalizations.customProfileDesc),
           onTap: () => _toAddCustom(context, ref),
+        ),
+        ListItem(
+          leading: const GlyphIcon(AppGlyphs.layers),
+          title: const Text('聚合订阅'),
+          subtitle: const Text('把多个机场订阅合并成一个配置'),
+          onTap: () => _toMerge(context),
+        ),
+      ],
+    );
+  }
+}
+
+class _MergeSubscriptionForm extends ConsumerStatefulWidget {
+  final BuildContext origin;
+
+  const _MergeSubscriptionForm({required this.origin});
+
+  @override
+  ConsumerState<_MergeSubscriptionForm> createState() =>
+      _MergeSubscriptionFormState();
+}
+
+class _MergeSubscriptionFormState
+    extends ConsumerState<_MergeSubscriptionForm> {
+  final _groupName = TextEditingController();
+  final _airports = TextEditingController();
+  var _busy = false;
+
+  @override
+  void dispose() {
+    _groupName.dispose();
+    _airports.dispose();
+    super.dispose();
+  }
+
+  Future<void> _submit(BuildContext context) async {
+    final groupName = _groupName.text.trim();
+    final entries = <({String name, String url})>[];
+    for (final line in _airports.text.split('\n')) {
+      final trimmed = line.trim();
+      if (trimmed.isEmpty) {
+        continue;
+      }
+      final sep = trimmed.indexOf('|');
+      final name = (sep == -1 ? '' : trimmed.substring(0, sep)).trim();
+      final url = (sep == -1 ? trimmed : trimmed.substring(sep + 1)).trim();
+      if (name.isEmpty || url.isEmpty) {
+        continue;
+      }
+      entries.add((name: name, url: url));
+    }
+    if (groupName.isEmpty || entries.isEmpty) {
+      dialogs.showMessage(
+        context: context,
+        title: '信息不完整',
+        message: const TextSpan(text: '请填写组名，以及至少一行 机场名|订阅链接'),
+      );
+      return;
+    }
+    setState(() {
+      _busy = true;
+    });
+    try {
+      final profile = await ref
+          .read(profilesActionProvider.notifier)
+          .createMergedSubscription(groupName: groupName, airports: entries);
+      if (!mounted) {
+        return;
+      }
+      final navigator = Navigator.of(context);
+      navigator.pop();
+      if (widget.origin.mounted) {
+        unawaited(BaseNavigator.push(
+          widget.origin,
+          CustomProfileView(profileId: profile.id),
+        ));
+      }
+    } catch (e) {
+      if (mounted) {
+        dialogs.showMessage(
+          context: context,
+          title: '创建失败',
+          message: TextSpan(text: compactError(e)),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _busy = false;
+        });
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ListView(
+      padding: EdgeInsets.only(
+        top: context.contentTopPadding,
+        left: 16,
+        right: 16,
+        bottom: 16,
+      ),
+      children: [
+        TextField(
+          controller: _groupName,
+          decoration: const InputDecoration(labelText: '聚合组名称'),
+        ),
+        const SizedBox(height: 12),
+        TextField(
+          controller: _airports,
+          maxLines: 8,
+          decoration: const InputDecoration(
+            labelText: '机场列表（每行：机场名|订阅链接）',
+            alignLabelWithHint: true,
+          ),
+        ),
+        const SizedBox(height: 16),
+        FilledButton(
+          onPressed: _busy ? null : () => _submit(context),
+          child: Text(_busy ? '导入中…' : '创建聚合订阅'),
+        ),
+        const SizedBox(height: 8),
+        const Text(
+          '示例：\n机场A|https://example.com/sub/aaaa\n机场B|https://example.com/sub/bbbb',
+          style: TextStyle(fontSize: 12, color: Colors.grey),
         ),
       ],
     );
