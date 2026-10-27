@@ -208,7 +208,6 @@ class _SpeedText extends ConsumerWidget {
             GlyphIcon(
               AppGlyphs.arrowDown,
               size: measure.textHeight(AppTextStyle.caption2),
-              color: context.colorScheme.primary,
             ),
             const SizedBox(width: 2),
             Text(
