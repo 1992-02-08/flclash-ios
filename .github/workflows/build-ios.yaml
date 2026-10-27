@@ -62,7 +62,10 @@ jobs:
         run: |
           set -eu
           meta=core/Clash.Meta
-          pinned=c5062921054902b25215a6a933e72ccd714c9bfa
+          # Pinned to the iOS branch: it carries constant.SetCache and the
+          # app-owned cache path that core/lifecycle.go relies on.
+          pinned=01285b4da2c137a4fb2860e94c3c61409c72687d
+          branch=ios-private-cache
           if [ ! -f "$meta/go.mod" ]; then
             git submodule update --init --recursive --depth 1 "$meta" || true
           fi
@@ -74,7 +77,7 @@ jobs:
             if git -C "$meta" fetch --depth 1 origin "$pinned"; then
               git -C "$meta" checkout --detach FETCH_HEAD
             else
-              git -C "$meta" checkout --detach origin/FlClash
+              git -C "$meta" checkout --detach origin/$branch
             fi
           fi
           test -f "$meta/go.mod"
