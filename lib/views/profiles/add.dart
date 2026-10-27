@@ -1,6 +1,8 @@
 import 'dart:async';
 
 import 'package:fl_clash/common/common.dart';
+import 'package:fl_clash/enum/enum.dart';
+import 'package:fl_clash/models/models.dart';
 import 'package:fl_clash/pages/scan.dart';
 import 'package:fl_clash/providers/providers.dart';
 import 'package:fl_clash/state.dart';
@@ -183,37 +185,22 @@ class _MergeSubscriptionForm extends ConsumerStatefulWidget {
 class _MergeSubscriptionFormState
     extends ConsumerState<_MergeSubscriptionForm> {
   final _groupName = TextEditingController();
-  final _airports = TextEditingController();
+  final _selected = <int>{};
   var _busy = false;
 
   @override
   void dispose() {
     _groupName.dispose();
-    _airports.dispose();
     super.dispose();
   }
 
   Future<void> _submit(BuildContext context) async {
     final groupName = _groupName.text.trim();
-    final entries = <({String name, String url})>[];
-    for (final line in _airports.text.split('\n')) {
-      final trimmed = line.trim();
-      if (trimmed.isEmpty) {
-        continue;
-      }
-      final sep = trimmed.indexOf('|');
-      final name = (sep == -1 ? '' : trimmed.substring(0, sep)).trim();
-      final url = (sep == -1 ? trimmed : trimmed.substring(sep + 1)).trim();
-      if (name.isEmpty || url.isEmpty) {
-        continue;
-      }
-      entries.add((name: name, url: url));
-    }
-    if (groupName.isEmpty || entries.isEmpty) {
+    if (groupName.isEmpty || _selected.isEmpty) {
       dialogs.showMessage(
         context: context,
         title: '信息不完整',
-        message: const TextSpan(text: '请填写组名，以及至少一行 机场名|订阅链接'),
+        message: const TextSpan(text: '请填写组名，并勾选至少一个订阅'),
       );
       return;
     }
@@ -223,7 +210,10 @@ class _MergeSubscriptionFormState
     try {
       final profile = await ref
           .read(profilesActionProvider.notifier)
-          .createMergedSubscription(groupName: groupName, airports: entries);
+          .createMergedSubscription(
+        groupName: groupName,
+        profileIds: _selected.toList(),
+      );
       if (!mounted) {
         return;
       }
@@ -254,6 +244,11 @@ class _MergeSubscriptionFormState
 
   @override
   Widget build(BuildContext context) {
+    final profiles = ref.watch(profilesProvider);
+    final subscriptions = [
+      for (final profile in profiles)
+        if (profile.type != ProfileType.custom) profile,
+    ];
     return ListView(
       padding: EdgeInsets.only(
         top: context.contentTopPadding,
@@ -266,23 +261,52 @@ class _MergeSubscriptionFormState
           controller: _groupName,
           decoration: const InputDecoration(labelText: '聚合组名称'),
         ),
-        const SizedBox(height: 12),
-        TextField(
-          controller: _airports,
-          maxLines: 8,
-          decoration: const InputDecoration(
-            labelText: '机场列表（每行：机场名|订阅链接）',
-            alignLabelWithHint: true,
-          ),
+        const SizedBox(height: 8),
+        Text(
+          '选择要合并的订阅（${_selected.length} 个）',
+          style: const TextStyle(fontSize: 12, color: Colors.grey),
         ),
+        const SizedBox(height: 4),
+        if (subscriptions.isEmpty)
+          const Padding(
+            padding: EdgeInsets.symmetric(vertical: 24),
+            child: Text(
+              '还没有订阅，请先在配置页添加机场订阅',
+              textAlign: TextAlign.center,
+            ),
+          )
+        else
+          ...subscriptions.map(
+            (profile) => ListItem.toggle(
+              key: ValueKey(profile.id),
+              title: Text(profile.realLabel),
+              subtitle: profile.subscriptionInfo == null
+                  ? null
+                  : Text(
+                      '${profile.subscriptionInfo!.upload.traffic.show} ↑ / '
+                      '${profile.subscriptionInfo!.download.traffic.show} ↓ · '
+                      '${profile.subscriptionInfo!.expire == 0 ? '长期' : DateTime.fromMillisecondsSinceEpoch(profile.subscriptionInfo!.expire * 1000).show}',
+                    ),
+              value: _selected.contains(profile.id),
+              onChanged: (value) {
+                setState(() {
+                  if (value) {
+                    _selected.add(profile.id);
+                  } else {
+                    _selected.remove(profile.id);
+                  }
+                });
+              },
+            ),
+          ),
         const SizedBox(height: 16),
         FilledButton(
           onPressed: _busy ? null : () => _submit(context),
-          child: Text(_busy ? '导入中…' : '创建聚合订阅'),
+          child: Text(_busy ? '创建中…' : '创建聚合订阅'),
         ),
         const SizedBox(height: 8),
         const Text(
-          '示例：\n机场A|https://example.com/sub/aaaa\n机场B|https://example.com/sub/bbbb',
+          '将从已勾选的订阅中合并全部节点到一个组',
           style: TextStyle(fontSize: 12, color: Colors.grey),
         ),
       ],
