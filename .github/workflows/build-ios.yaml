@@ -55,6 +55,31 @@ jobs:
           submodules: recursive
           fetch-depth: 1
 
+      # The upstream repository stores mihomo as a git submodule, which a
+      # squashed/exported history does not carry. Restore it explicitly so the
+      # Go build and the CA-bundle step always see a real checkout.
+      - name: Ensure mihomo submodule present
+        run: |
+          set -eu
+          meta=core/Clash.Meta
+          pinned=c5062921054902b25215a6a933e72ccd714c9bfa
+          if [ ! -f "$meta/go.mod" ]; then
+            git submodule update --init --recursive --depth 1 "$meta" || true
+          fi
+          if [ ! -f "$meta/go.mod" ]; then
+            rm -rf "$meta"
+            git clone --filter=blob:none --no-checkout \
+              https://github.com/hyy807/Clash.Meta.git "$meta"
+            git -C "$meta" sparse-checkout disable || true
+            if git -C "$meta" fetch --depth 1 origin "$pinned"; then
+              git -C "$meta" checkout --detach FETCH_HEAD
+            else
+              git -C "$meta" checkout --detach origin/FlClash
+            fi
+          fi
+          test -f "$meta/go.mod"
+          git -C "$meta" rev-parse --short HEAD
+
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
