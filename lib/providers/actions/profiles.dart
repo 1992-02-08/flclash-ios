@@ -213,6 +213,53 @@ class ProfilesAction extends _$ProfilesAction {
     return profile.id;
   }
 
+  /// Imports each airport subscription as a profile, then builds a custom
+  /// profile whose single group aggregates them all, like a merged feed.
+  Future<Profile> createMergedSubscription({
+    required String groupName,
+    required List<({String name, String url})> airports,
+  }) async {
+    final airportProfiles = <Profile>[];
+    for (final airport in airports) {
+      final profile = Profile.normal(label: airport.name, url: airport.url);
+      ref.read(profilesProvider.notifier).put(profile);
+      final updated = await profile.update(
+        validate: (path, key) => _core.validateProfile(path, key),
+      );
+      final latest = ref.read(profilesProvider).getProfile(profile.id);
+      final next = (latest ?? profile).copyWith(
+        label: (latest ?? profile).label.takeFirstValid([updated.label]),
+        subscriptionInfo: updated.subscriptionInfo,
+        lastUpdateDate: updated.lastUpdateDate,
+      );
+      ref.read(profilesProvider.notifier).put(next);
+      airportProfiles.add(next);
+    }
+    final merged = Profile.custom(label: groupName);
+    putProfile(merged);
+    await database.proxyGroupsDao.order(
+      merged.id,
+      proxyGroup: ProxyGroup(
+        id: snowflake.id,
+        name: groupName,
+        type: GroupType.Selector,
+        use: [for (final p in airportProfiles) p.realLabel],
+      ),
+      order: '',
+    );
+    await database.rulesDao.putRule(
+      Rule.parse('MATCH,$groupName'),
+      profileId: merged.id,
+    );
+    ref.read(currentProfileIdProvider.notifier).value = merged.id;
+    unawaited(
+      ref
+          .read(setupActionProvider.notifier)
+          .applyProfileDebounce(silence: true),
+    );
+    return merged;
+  }
+
   void touchProfile(int id) {
     final profile = ref.read(profilesProvider).getProfile(id);
     if (profile == null) return;
