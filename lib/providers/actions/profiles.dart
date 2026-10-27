@@ -213,28 +213,27 @@ class ProfilesAction extends _$ProfilesAction {
     return profile.id;
   }
 
-  /// Imports each airport subscription as a profile, then builds a custom
-  /// profile whose single group aggregates them all, like a merged feed.
+  /// Builds a custom profile whose single group aggregates the selected
+  /// existing subscriptions, like a merged feed (sub store style).
   Future<Profile> createMergedSubscription({
     required String groupName,
-    required List<({String name, String url})> airports,
+    required List<int> profileIds,
   }) async {
-    final airportProfiles = <Profile>[];
-    for (final airport in airports) {
-      final profile = Profile.normal(label: airport.name, url: airport.url);
-      ref.read(profilesProvider.notifier).put(profile);
-      final updated = await profile.update(
-        validate: (path, key) => _core.validateProfile(path, key),
-      );
-      final latest = ref.read(profilesProvider).getProfile(profile.id);
-      final next = (latest ?? profile).copyWith(
-        label: (latest ?? profile).label.takeFirstValid([updated.label]),
-        subscriptionInfo: updated.subscriptionInfo,
-        lastUpdateDate: updated.lastUpdateDate,
-      );
-      ref.read(profilesProvider.notifier).put(next);
-      airportProfiles.add(next);
+    final profiles = ref.read(profilesProvider);
+    final selected = <Profile>[
+      for (final id in profileIds)
+        if (profiles.getProfile(id) case final p?
+            when p.type != ProfileType.custom)
+          p,
+    ];
+    if (selected.isEmpty) {
+      throw const FormatException('没有选中的订阅');
     }
+    final labels = <String>{};
+    final use = <String>[
+      for (final p in selected)
+        if (labels.add(p.realLabel)) p.realLabel,
+    ];
     final merged = Profile.custom(label: groupName);
     putProfile(merged);
     await database.proxyGroupsDao.order(
@@ -243,7 +242,7 @@ class ProfilesAction extends _$ProfilesAction {
         id: snowflake.id,
         name: groupName,
         type: GroupType.Selector,
-        use: [for (final p in airportProfiles) p.realLabel],
+        use: use,
       ),
       order: '',
     );
