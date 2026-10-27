@@ -120,8 +120,9 @@ class _ProxiesViewState extends ConsumerState<ProxiesView> {
       isLoading: isLoading,
       resizeToAvoidBottomInset: false,
       primaryAction: primaryAction,
-      searchActions: [?primaryAction, ?_buildSpeedAction()],
+      searchActions: [?primaryAction],
       iconActions: [
+        ?_buildSpeedAction(),
         if (_isTab && !picker)
           IconButtonData(
             glyph: AppGlyphs.locate,
