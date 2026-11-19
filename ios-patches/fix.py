@@ -9,6 +9,9 @@ for name, old, new in [
  assert text.startswith(old), name
  p.write_text(text.replace(old,new,1))
  print('iOS build tag:',name)
+p=Path('up/core/lib.go')
+s=p.read_text().replace('dns.UpdateSystemDNS(addr)\n\t\tdns.FlushCacheWithDefaultResolver()', 'applySystemDns(addr)').replace('\n\t"github.com/metacubex/mihomo/dns"', '')
+p.write_text(s)
 p=Path('up/lib/providers/actions/setup.dart')
 s=p.read_text().replace('final inputsApplied = await _inputsApplied();','final applied = await inputsApplied();').replace('&& !inputsApplied)', '&& !applied)').replace('_inputsApplied()', 'inputsApplied()')
 p.write_text(s)
