@@ -20,7 +20,7 @@ jobs:
           cp -a tool/ios up/tool/ios
           cp -a core/cmd/ios up/core/cmd/ios
           cp core/platform/ios.go up/core/platform/
-          for f in bride.h delay_preparation.go dns_android.go dns_ios.go; do cp "core/$f" "up/core/$f"; done
+          for f in bride.h dns_android.go dns_ios.go; do cp "core/$f" "up/core/$f"; done
           cp lib/common/startup_trace.dart up/lib/common/
           for f in NOTICE setup.dart distribute_options.yaml; do cp "$f" up/; done
           python3 -c "import base64,gzip,pathlib; pathlib.Path('/tmp/port.patch').write_bytes(gzip.decompress(base64.b64decode(pathlib.Path('ios-patches/port.patch.gz.b64').read_text())))"
@@ -32,8 +32,7 @@ jobs:
           git clone --depth 1 -b FlClash https://github.com/chen08209/Clash.Meta.git up/core/Clash.Meta
           mkdir -p up/core/Clash.Meta/component/ca
           curl -fL --retry 4 https://curl.se/ca/cacert.pem -o up/core/Clash.Meta/component/ca/ca-certificates.crt
-          grep -q 'SupportPlatform.IOS' up/lib/enum/enum.dart
-          grep -q 'pluginKey' up/lib/enum/enum.dart
+          if [ -f ios-patches/fix.py ]; then python3 ios-patches/fix.py; fi
       - uses: actions/setup-go@v5
         with:
           go-version: '1.27.3'
