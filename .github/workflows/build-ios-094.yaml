@@ -1,0 +1,91 @@
+name: FlClash 0.9.4 unsigned IPA
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  ipa:
+    runs-on: macos-26
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - name: Assemble v0.9.4 and iOS port
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fL --retry 4 https://codeload.github.com/chen08209/FlClash/tar.gz/refs/tags/v0.9.4 -o /tmp/up.tgz
+          mkdir up
+          tar xzf /tmp/up.tgz -C up --strip-components=1
+          cp -a ios up/ios
+          cp -a tool/ios up/tool/ios
+          cp -a core/cmd/ios up/core/cmd/ios
+          cp core/platform/ios.go up/core/platform/
+          for f in bride.h delay_preparation.go dns_android.go dns_ios.go; do cp "core/$f" "up/core/$f"; done
+          cp lib/common/startup_trace.dart up/lib/common/
+          for f in NOTICE setup.dart distribute_options.yaml; do cp "$f" up/; done
+          python3 -c "import base64,gzip,pathlib; pathlib.Path('/tmp/port.patch').write_bytes(gzip.decompress(base64.b64decode(pathlib.Path('ios-patches/port.patch.gz.b64').read_text())))"
+          patch -p1 -d up -i /tmp/port.patch
+          curl -fL --retry 4 https://pub.dev/api/archives/prism_ui-0.1.2.tar.gz -o /tmp/prism.tgz
+          mkdir -p up/plugins/prism_ui
+          tar xzf /tmp/prism.tgz -C up/plugins/prism_ui
+          rm -rf up/core/Clash.Meta
+          git clone --depth 1 -b FlClash https://github.com/chen08209/Clash.Meta.git up/core/Clash.Meta
+          mkdir -p up/core/Clash.Meta/component/ca
+          curl -fL --retry 4 https://curl.se/ca/cacert.pem -o up/core/Clash.Meta/component/ca/ca-certificates.crt
+          grep -q 'SupportPlatform.IOS' up/lib/enum/enum.dart
+          grep -q 'pluginKey' up/lib/enum/enum.dart
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.27.3'
+          cache-dependency-path: up/core/go.sum
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: '3.50.0'
+          cache: true
+      - name: Prepare toolchains
+        run: |
+          xcodebuild -version
+          rustup target add aarch64-apple-ios
+      - name: Dependencies and generated Dart
+        working-directory: up
+        run: |
+          flutter pub get
+          dart run build_runner build --delete-conflicting-outputs
+      - name: Build Go iOS archive
+        working-directory: up
+        run: |
+          PLATFORM_NAME=iphoneos bash tool/ios/build_core.sh
+      - name: Configure Flutter
+        working-directory: up
+        run: |
+          flutter build ios --release --no-codesign --config-only --build-name 0.9.4 --build-number "$GITHUB_RUN_NUMBER"
+      - name: Archive unsigned app
+        working-directory: up
+        env:
+          DISABLE_SWIFTLINT: '1'
+        run: |
+          set -o pipefail
+          xcodebuild archive -workspace ios/Runner.xcworkspace -scheme Runner -configuration Release -destination 'generic/platform=iOS' -archivePath "$RUNNER_TEMP/FlClash.xcarchive" -skipPackagePluginValidation -skipMacroValidation APP_BUNDLE_ID=com.8w7vc.axwy CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO 2>&1 | tee "$RUNNER_TEMP/archive.log"
+      - name: Package IPA
+        shell: bash
+        run: |
+          set -euo pipefail
+          app="$RUNNER_TEMP/FlClash.xcarchive/Products/Applications/Runner.app"
+          test -d "$app/PlugIns/NECore.appex"
+          mkdir -p "$RUNNER_TEMP/ipa/Payload" output
+          ditto "$app" "$RUNNER_TEMP/ipa/Payload/FlClash.app"
+          find "$RUNNER_TEMP/ipa/Payload" -name _CodeSignature -type d -prune -exec rm -rf {} +
+          find "$RUNNER_TEMP/ipa/Payload" -name embedded.mobileprovision -delete
+          (cd "$RUNNER_TEMP/ipa" && zip -qry "$GITHUB_WORKSPACE/output/FlClash-0.9.4-ios-unsigned.ipa" Payload)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: FlClash-0.9.4-ios-unsigned
+          path: output/*.ipa
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: build-failure-logs
+          path: ${{ runner.temp }}/archive.log
+          if-no-files-found: ignore
