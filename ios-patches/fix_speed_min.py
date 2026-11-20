@@ -1,36 +1,273 @@
 from pathlib import Path
 import sys
-r=Path(sys.argv[1] if len(sys.argv)>1 else 'up')
-def rep(p,a,b):
- q=r/p;s=q.read_text();assert s.count(a)==1,(p,s.count(a));q.write_text(s.replace(a,b,1))
-(r/'lib/providers/proxy_speed.dart').write_text('''import 'package:fl_clash/common/common.dart';
+
+root = Path(sys.argv[1] if len(sys.argv) > 1 else 'up')
+
+
+def rep(path, old, new):
+    file = root / path
+    source = file.read_text()
+    count = source.count(old)
+    assert count == 1, (path, count, old)
+    file.write_text(source.replace(old, new, 1))
+
+
+(root / 'lib/providers/proxy_speed.dart').write_text(
+    '''import 'package:fl_clash/common/common.dart';
 import 'package:fl_clash/core/core.dart';
 import 'package:fl_clash/models/models.dart';
 import 'package:fl_clash/providers/app.dart';
 import 'package:fl_clash/providers/core.dart';
 import 'package:fl_clash/providers/state.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-const speedTestMaxBytes=8*1024*1024;
-const speedTestTimeoutMs=15000;
-const speedTestUrl='https://speed.cloudflare.com/__down?bytes=$speedTestMaxBytes';
-class ProxySpeedEntry{const ProxySpeedEntry(this.proxyName,this.mbps);final String proxyName;final double mbps;String get formatted=>'${mbps.toStringAsFixed(1)} MB/s';}
-class SpeedTestingGroups extends Notifier<Set<String>>{@override Set<String> build()=>const {};bool start(String n){if(state.contains(n))return false;state={...state,n};return true;}void stop(String n){if(state.contains(n))state={...state}..remove(n);}}
-final speedTestingGroupsProvider=NotifierProvider<SpeedTestingGroups,Set<String>>(SpeedTestingGroups.new);
-class ProxySpeedTest extends Notifier<Map<String,ProxySpeedEntry>>{@override Map<String,ProxySpeedEntry> build()=>const {};ProxySpeedEntry? best(Iterable<String> ns){ProxySpeedEntry? b;for(final n in ns){final e=state[n];if(e!=null&&(b==null||e.mbps>b.mbps))b=e;}return b;}Future<ProxySpeedEntry?> test(Proxy p)async{try{final x=computeRealSelectedProxyState(p.name,groups:ref.read(groupsProvider),selectedMap:ref.read(selectedMapProvider));if(x.proxyName.isEmpty)return null;final y=await ref.read(coreHandlerProvider).probe(ProbeParams(url:speedTestUrl,proxyName:x.proxyName,timeout:speedTestTimeoutMs,maxBody:speedTestMaxBytes));if(y.error?.isNotEmpty??false)return null;final ms=y.duration>0?y.duration:y.delay;if(y.bytes<=0||ms<=0)return null;final e=ProxySpeedEntry(p.name,y.bytes/(1024*1024)/(ms/1000));state={...state,p.name:e};return e;}catch(e){commonPrint.log('speed test ${p.name}: $e');return null;}}}
-final proxySpeedProvider=NotifierProvider<ProxySpeedTest,Map<String,ProxySpeedEntry>>(ProxySpeedTest.new);
-''')
-rep('lib/providers/providers.dart',"export 'route_state.dart';\n","export 'route_state.dart';\nexport 'proxy_speed.dart';\n")
-rep('lib/providers/actions/proxies.dart','  final TaskPool _delayTestPool = TaskPool(maxConcurrentDelayTests);\n','  final TaskPool _delayTestPool = TaskPool(maxConcurrentDelayTests);\n  final _speedTestPool=TaskPool(4);\n')
-rep('lib/providers/actions/proxies.dart','\n  List<_DelayTestTarget> _resolveDelayTestTargets(','''\n  Future<void> speedTestPageGroup(String name,{bool matchSearch=true}) async {final g=ref.read(groupsProvider).getGroup(name);if(g==null)return;final t=ref.read(speedTestingGroupsProvider.notifier);if(!t.start(name))return;try{final q=SearchQuery(matchSearch?ref.read(queryProvider(QueryTag.proxies)):'');final ps=g.all.whereMatches(q,(p)=>p.searchFields).toList();await Future.wait(ps.map((p)=>_speedTestPool.run(()=>ref.read(proxySpeedProvider.notifier).test(p))));final b=ref.read(proxySpeedProvider.notifier).best(ps.map((p)=>p.name));dialogs.showBanner(b==null?'下载测速失败':'下载测速完成：${b.formatted}',level:b==null?BannerLevel.error:BannerLevel.success);}finally{t.stop(name);}}
 
-  List<_DelayTestTarget> _resolveDelayTestTargets(''')
-rep('lib/views/proxies/tab.dart','\n  Group? get currentGroup {','''
-  Future<void> speedTestCurrentGroup() async {final g=currentGroup;if(g==null)return;await ref.read(proxiesActionProvider.notifier).speedTestPageGroup(g.name);}
+// Keep the payload bounded so a slow node cannot hold the whole test forever.
+const int speedTestMaxBytes = 4 * 1024 * 1024;
+const int speedTestTimeoutMs = 30000;
+const String speedTestUrl =
+    'https://speed.cloudflare.com/__down?bytes=$speedTestMaxBytes';
 
-  Group? get currentGroup {''')
-rep('lib/views/proxies/proxies.dart','\n  void _onSearch(String value) {',"""
-  void _onSearch(String value) {""")
-rep('lib/views/proxies/proxies.dart','''      _optionsMenuItem(
+class ProxySpeedEntry {
+  const ProxySpeedEntry({
+    required this.proxyName,
+    required this.mbps,
+    required this.bytes,
+    required this.durationMs,
+    required this.statusCode,
+    required this.testUrl,
+    required this.testedAt,
+  });
+
+  final String proxyName;
+  final double mbps;
+  final int bytes;
+  final int durationMs;
+  final int statusCode;
+  final String testUrl;
+  final DateTime testedAt;
+
+  String get formatted => '${mbps.toStringAsFixed(1)} MB/s';
+}
+
+class SpeedTestingGroups extends Notifier<Set<String>> {
+  @override
+  Set<String> build() => const {};
+
+  bool start(String groupName) {
+    if (state.contains(groupName)) return false;
+    state = {...state, groupName};
+    return true;
+  }
+
+  void stop(String groupName) {
+    if (state.contains(groupName)) state = {...state}..remove(groupName);
+  }
+}
+
+final speedTestingGroupsProvider =
+    NotifierProvider<SpeedTestingGroups, Set<String>>(
+  SpeedTestingGroups.new,
+);
+
+class ProxySpeedTest extends Notifier<Map<String, ProxySpeedEntry>> {
+  @override
+  Map<String, ProxySpeedEntry> build() => const {};
+
+  ProxySpeedEntry? fastestAmong(Iterable<String> proxyNames) {
+    ProxySpeedEntry? fastest;
+    for (final name in proxyNames) {
+      final entry = state[name];
+      if (entry != null && (fastest == null || entry.mbps > fastest.mbps)) {
+        fastest = entry;
+      }
+    }
+    return fastest;
+  }
+
+  Future<ProxySpeedEntry?> test(Proxy proxy) async {
+    final name = proxy.name;
+    try {
+      final realState = computeRealSelectedProxyState(
+        name,
+        groups: ref.read(groupsProvider),
+        selectedMap: ref.read(selectedMapProvider),
+      );
+      final effectiveProxyName = realState.proxyName;
+      if (effectiveProxyName.isEmpty) {
+        commonPrint.log('Speed test skipped for $name: no effective proxy');
+        return null;
+      }
+
+      final result = await ref.read(coreHandlerProvider).probe(
+            ProbeParams(
+              url: speedTestUrl,
+              proxyName: effectiveProxyName,
+              headers: const {
+                'Accept': '*/*',
+                'Cache-Control': 'no-cache',
+              },
+              timeout: speedTestTimeoutMs,
+              maxBody: speedTestMaxBytes,
+            ),
+          );
+      if (result == null) {
+        commonPrint.log('Speed test failed for $name: empty probe result');
+        return null;
+      }
+      if (result.error?.isNotEmpty ?? false) {
+        commonPrint.log(
+          'Speed test failed for $name: ${result.error} ${result.message}',
+        );
+        return null;
+      }
+      if (result.statusCode < 200 || result.statusCode >= 300) {
+        commonPrint.log(
+          'Speed test failed for $name: HTTP ${result.statusCode}',
+        );
+        return null;
+      }
+
+      final duration = result.duration > 0 ? result.duration : result.delay;
+      if (result.bytes <= 0 || duration <= 0) {
+        commonPrint.log(
+          'Speed test failed for $name: bytes=${result.bytes}, duration=$duration',
+        );
+        return null;
+      }
+      final entry = ProxySpeedEntry(
+        proxyName: name,
+        mbps: result.bytes / (1024 * 1024) / (duration / 1000),
+        bytes: result.bytes,
+        durationMs: duration,
+        statusCode: result.statusCode,
+        testUrl: speedTestUrl,
+        testedAt: DateTime.now(),
+      );
+      state = {...state, name: entry};
+      return entry;
+    } catch (error, stackTrace) {
+      commonPrint.log(
+        'Speed test failed for $name: $error\\n$stackTrace',
+        logLevel: coreFailureLogLevel(error),
+      );
+      return null;
+    }
+  }
+}
+
+final proxySpeedProvider =
+    NotifierProvider<ProxySpeedTest, Map<String, ProxySpeedEntry>>(
+  ProxySpeedTest.new,
+);
+'''
+)
+
+rep(
+    'lib/providers/providers.dart',
+    "export 'route_state.dart';\n",
+    "export 'route_state.dart';\nexport 'proxy_speed.dart';\n",
+)
+rep(
+    'lib/providers/actions/proxies.dart',
+    '  final TaskPool _delayTestPool = TaskPool(maxConcurrentDelayTests);\n',
+    '  final TaskPool _delayTestPool = TaskPool(maxConcurrentDelayTests);\n'
+    '  final TaskPool _speedTestPool = TaskPool(4);\n',
+)
+rep(
+    'lib/providers/actions/proxies.dart',
+    '\n  List<_DelayTestTarget> _resolveDelayTestTargets(',
+    '''
+  Future<void> speedTestPageGroup(
+    String groupName, {
+    bool matchSearch = true,
+  }) async {
+    final group = ref.read(groupsProvider).getGroup(groupName);
+    if (group == null) return;
+    final testing = ref.read(speedTestingGroupsProvider.notifier);
+    if (!testing.start(groupName)) return;
+    try {
+      final query = SearchQuery(
+        matchSearch ? ref.read(queryProvider(QueryTag.proxies)) : '',
+      );
+      final proxies = group.all
+          .whereMatches(query, (proxy) => proxy.searchFields)
+          .toList();
+      final speed = ref.read(proxySpeedProvider.notifier);
+      await Future.wait([
+        for (final proxy in proxies)
+          _speedTestPool.run(() => speed.test(proxy)),
+      ]);
+      final fastest = speed.fastestAmong(proxies.map((proxy) => proxy.name));
+      if (fastest == null) {
+        dialogs.showBanner(
+          '${currentAppLocalizations.downloadSpeedTest} '
+          '${currentAppLocalizations.serviceFailed}',
+          level: BannerLevel.error,
+        );
+      } else {
+        dialogs.showBanner(
+          '${currentAppLocalizations.downloadSpeedTest} '
+          '${currentAppLocalizations.done}: ${fastest.formatted}',
+          level: BannerLevel.success,
+        );
+      }
+    } finally {
+      testing.stop(groupName);
+    }
+  }
+
+  List<_DelayTestTarget> _resolveDelayTestTargets(''',
+)
+rep(
+    'lib/views/proxies/tab.dart',
+    '\n  Group? get currentGroup {',
+    '''
+  Future<void> speedTestCurrentGroup() async {
+    final group = currentGroup;
+    if (group == null) return;
+    await ref
+        .read(proxiesActionProvider.notifier)
+        .speedTestPageGroup(group.name);
+  }
+
+  Group? get currentGroup {''',
+)
+rep(
+    'lib/views/proxies/proxies.dart',
+    '\n  void _onSearch(String value) {',
+    '''
+  IconButtonData? _buildSpeedAction() {
+    if (!_isTab || widget.picker) return null;
+    final groupName = _proxiesTabKey.currentState?.currentGroup?.name;
+    final isTesting = groupName != null &&
+        ref.watch(
+          speedTestingGroupsProvider.select(
+            (state) => state.contains(groupName),
+          ),
+        );
+    return IconButtonData(
+      glyph: AppGlyphs.speed,
+      onPressed: () {
+        _proxiesTabKey.currentState?.speedTestCurrentGroup();
+      },
+      tooltip: '下载测速',
+      isLoading: isTesting,
+    );
+  }
+
+  void _onSearch(String value) {''',
+)
+rep(
+    'lib/views/proxies/proxies.dart',
+    '''      iconActions: [
+        if (_isTab && !picker)''',
+    '''      iconActions: [
+        ?_buildSpeedAction(),
+        if (_isTab && !picker)''',
+)
+rep(
+    'lib/views/proxies/proxies.dart',
+    '''      _optionsMenuItem(
         glyph: AppGlyphs.textSize,
         label: appLocalizations.size,
         options: ProxyCardType.values,
@@ -38,7 +275,8 @@ rep('lib/views/proxies/proxies.dart','''      _optionsMenuItem(
         textOf: (type) => type.label,
         onSelected: (type) =>
             _updateStyle((state) => state.copyWith(cardType: type)),
-      ),''','''      _optionsMenuItem(
+      ),''',
+    '''      _optionsMenuItem(
         glyph: AppGlyphs.textSize,
         label: appLocalizations.size,
         options: ProxyCardType.values,
@@ -55,5 +293,6 @@ rep('lib/views/proxies/proxies.dart','''      _optionsMenuItem(
           onPressed: () {
             _proxiesTabKey.currentState?.speedTestCurrentGroup();
           },
-        ),''')
-print('speed patch applied')
+        ),''',
+)
+print('Patched iOS speed test provider, action, UI and diagnostics')
