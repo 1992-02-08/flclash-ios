@@ -18,7 +18,7 @@ with TemporaryDirectory() as tmp:
  a=Path(tmp)/'prism.tgz'; run(['curl','-fL','--retry','4','https://codeload.github.com/chen08209/prism_ui/tar.gz/6c47901cc80b5325bdb9650579ca2e000a60b39e','-o',str(a)],check=True); shutil.rmtree(prism); prism.mkdir(); run(['tar','xzf',str(a),'-C',str(prism),'--strip-components=1'],check=True)
 run(['python3','ios-patches/fix_speed_min.py'], check=True)
 
-# Keep the existing menu placement from the screenshot; do not add a toolbar action.
+# Keep the original menu placement from the screenshot; do not add a toolbar action.
 p=Path('up/lib/views/proxies/proxies.dart')
 s=p.read_text()
 start=s.find('  IconButtonData? _buildSpeedAction() {')
@@ -27,39 +27,61 @@ if start >= 0:
     s=s[:start]+s[end:]
 s=s.replace('        ?_buildSpeedAction(),\n', '')
 s=s.replace('云端测速', '下载测速')
+
+# Call the action directly from the popup item instead of relying on a possibly
+# unmounted GlobalKey. This also gives immediate feedback when the group is empty.
+old_callback='''          onPressed: () {
+            _proxiesTabKey.currentState?.speedTestCurrentGroup();
+          },'''
+new_callback='''          onPressed: _startDownloadSpeedTest,'''
+assert s.count(old_callback) == 1
+s=s.replace(old_callback, new_callback, 1)
+needle='''  void _onSearch(String value) {'''
+insert='''  void _startDownloadSpeedTest() {
+    final state = ref.read(proxiesTabStateProvider);
+    final groupName = state.currentGroupName ??
+        (state.groups.isEmpty ? null : state.groups.first.name);
+    if (groupName == null) {
+      dialogs.showBanner('下载测速：没有可用节点', level: BannerLevel.error);
+      return;
+    }
+    final group = state.groups.firstWhere(
+      (item) => item.name == groupName,
+      orElse: () => state.groups.first,
+    );
+    dialogs.showBanner('下载测速开始：${group.all.length} 个节点');
+    ref.read(proxiesActionProvider.notifier).speedTestPageGroup(groupName);
+  }
+
+  void _onSearch(String value) {'''
+assert s.count(needle) == 1
+s=s.replace(needle, insert, 1)
 p.write_text(s)
 
-# Keep the original visible label; v0.9.4 has no downloadSpeedTest key.
+# v0.9.4 has no downloadSpeedTest localization key; keep the visible label stable.
 p=Path('up/lib/providers/actions/proxies.dart')
 s=p.read_text()
 s=s.replace("          '${currentAppLocalizations.downloadSpeedTest} '\n          '${currentAppLocalizations.serviceFailed}',", "          '下载测速 ${currentAppLocalizations.serviceFailed}',")
 s=s.replace("          '${currentAppLocalizations.downloadSpeedTest} '\n          '${currentAppLocalizations.done}: ${fastest.formatted}',", "          '下载测速 ${currentAppLocalizations.done}: ${fastest.formatted}',")
-
-# Give immediate feedback and avoid a null TabController swallowing the tap.
-needle="""      final proxies = group.all
-          .whereMatches(query, (proxy) => proxy.searchFields)
-          .toList();
-      final speed = ref.read(proxySpeedProvider.notifier);"""
-replacement="""      final proxies = group.all
-          .whereMatches(query, (proxy) => proxy.searchFields)
-          .toList();
-      dialogs.showBanner('下载测速开始：${proxies.length} 个节点');
-      final speed = ref.read(proxySpeedProvider.notifier);"""
-assert s.count(needle) == 1
-s=s.replace(needle,replacement,1)
 p.write_text(s)
 
+# Keep a fallback group for the tab state as well.
 p=Path('up/lib/views/proxies/tab.dart')
 s=p.read_text()
-old="""  Group? get currentGroup {
+old='''  Group? get currentGroup {
     return _getGroup(_tabController?.index);
-  }"""
-new="""  Group? get currentGroup {
+  }'''
+new='''  Group? get currentGroup {
     final indexed = _getGroup(_tabController?.index);
     if (indexed != null) return indexed;
-    final name = ref.read(proxiesTabStateProvider).currentGroupName;
-    return name == null ? null : ref.read(groupsProvider).getGroup(name);
-  }"""
-assert s.count(old) == 1
-s=s.replace(old,new,1)
+    final state = ref.read(proxiesTabStateProvider);
+    final name = state.currentGroupName;
+    if (name != null) {
+      final named = state.groups.where((item) => item.name == name);
+      if (named.isNotEmpty) return named.first;
+    }
+    return state.groups.isEmpty ? null : state.groups.first;
+  }'''
+if s.count(old) == 1:
+    s=s.replace(old,new,1)
 p.write_text(s)
