@@ -1,0 +1,41 @@
+name: Prepare artifact download
+on:
+  workflow_dispatch:
+    inputs:
+      artifact_id:
+        description: Build artifact ID
+        required: true
+        default: '14607681787'
+permissions:
+  actions: read
+jobs:
+  download:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Request temporary download URL
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          ARTIFACT_ID: ${{ inputs.artifact_id }}
+        run: |
+          python3 - <<'PY'
+          import os, urllib.request, urllib.error
+          class NoRedirect(urllib.request.HTTPRedirectHandler):
+              def redirect_request(self, req, fp, code, msg, headers, newurl):
+                  return None
+          artifact_id = os.environ['ARTIFACT_ID']
+          assert artifact_id.isdigit()
+          request = urllib.request.Request(
+              f"https://api.github.com/repos/{os.environ['REPOSITORY']}/actions/artifacts/{artifact_id}/zip",
+              headers={'Authorization': 'Bearer ' + os.environ['GH_TOKEN'], 'Accept': 'application/vnd.github+json'},
+          )
+          try:
+              urllib.request.build_opener(NoRedirect).open(request, timeout=30)
+              raise RuntimeError('Expected a temporary download redirect')
+          except urllib.error.HTTPError as response:
+              if response.code != 302:
+                  raise
+              url = response.headers['Location']
+              assert url.startswith('https://')
+              print('::notice title=Temporary artifact download::' + url.replace('%', '%25').replace('\n', '%0A').replace('\r', '%0D'))
+          PY
