@@ -1,6 +1,11 @@
 name: Inspect build errors
 on:
   workflow_dispatch:
+    inputs:
+      run_id:
+        description: Failed build run ID
+        required: true
+        default: '44684631780'
 permissions:
   actions: read
 jobs:
@@ -10,14 +15,28 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: build-failure-logs
-          run-id: 44677233238
+          run-id: ${{ inputs.run_id }}
           github-token: ${{ github.token }}
-      - run: |
+      - name: Archive diagnostic context
+        run: |
           python3 - <<'PY'
+          from pathlib import Path
           import re
-          lines=open('archive.log', errors='replace').read().splitlines()
-          for i,line in enumerate(lines):
-              if re.search(r'error\[|error:|panicked|Caused by|could not compile|build_hooks|cargo.*failed|failed to run',line,re.I) and not line.startswith('lib/'):
-                  block='\n'.join(lines[max(0,i-2):i+5])[:3000]
-                  print('::error::'+block.replace('%','%25').replace('\r','%0D').replace('\n','%0A'))
+          lines=Path('archive.log').read_text(errors='replace').splitlines()
+          def emit(title, block):
+              text='\n'.join(block)
+              text=text.replace('%','%25').replace('\r','%0D').replace('\n','%0A')
+              print(f'::notice title={title}::{text}')
+          emit('Log summary',[f'{len(lines)} archive lines'])
+          targets=[i for i,s in enumerate(lines) if re.search(r'error:|error\[|fatal error|panicked|Caused by|Undefined symbols|build_hooks|native assets|hook/build|failed to',s,re.I)]
+          ranges=[]
+          for i in targets:
+              start,end=max(0,i-15),min(len(lines),i+20)
+              if ranges and start <= ranges[-1][1]: ranges[-1][1]=max(end,ranges[-1][1])
+              else: ranges.append([start,end])
+          for start,end in ranges:
+              for offset in range(start,end,30):
+                  emit(f'Archive lines {offset+1}-{min(offset+30,end)}',lines[offset:min(offset+30,end)])
+          for offset in range(max(0,len(lines)-150),len(lines),30):
+              emit(f'Archive tail {offset+1}',lines[offset:offset+30])
           PY
