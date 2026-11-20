@@ -5,8 +5,8 @@ root = Path(__file__).resolve().parents[2] / 'up'
 checks = {
     'speed provider': [
         ('lib/providers/proxy_speed.dart', 'coreHandlerProvider).probe('),
-        ('lib/providers/proxy_speed.dart', 'speed.cloudflare.com/__down'),
-        ('lib/providers/proxy_speed.dart', 'proof.ovh.net/files/10Mb.dat'),
+        ('lib/providers/proxy_speed.dart', 'speed.cloudflare.com/__down?bytes=$speedTestMaxBytes'),
+        ('lib/providers/proxy_speed.dart', 'speedTestMaxBytes = 8 * 1024 * 1024'),
         ('lib/providers/proxy_speed.dart', 'result.bytes'),
         ('lib/providers/proxy_speed.dart', 'result.duration'),
     ],
@@ -14,6 +14,7 @@ checks = {
         ('lib/providers/actions/proxies.dart', 'speedTestPageGroup'),
         ('lib/providers/actions/proxies.dart', 'speedTestingGroupsProvider'),
         ('lib/providers/actions/proxies.dart', '_speedTestPool'),
+        ('lib/providers/actions/proxies.dart', '下载测速开始'),
     ],
     'menu callback': [
         ('lib/views/proxies/proxies.dart', "label: '下载测速'"),
