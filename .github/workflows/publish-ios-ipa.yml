@@ -1,0 +1,54 @@
+name: Publish FlClash iOS IPA
+
+on:
+  workflow_run:
+    workflows: ["FlClash iOS unsigned IPA"]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: "Successful build workflow run ID"
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  contents: write
+
+jobs:
+  publish:
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download IPA artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_RUN_ID: ${{ inputs.run_id || github.event.workflow_run.id }}
+        run: |
+          set -euo pipefail
+          run_json="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${SOURCE_RUN_ID}")"
+          run_number="$(jq -r .run_number <<<"$run_json")"
+          head_sha="$(jq -r .head_sha <<<"$run_json")"
+          artifact_id="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${SOURCE_RUN_ID}/artifacts" --jq '.artifacts[] | select(.expired == false) | .id' | head -n1)"
+          test -n "$artifact_id"
+          gh api -H 'Accept: application/vnd.github+json' "repos/${GITHUB_REPOSITORY}/actions/artifacts/${artifact_id}/zip" > /tmp/artifact.zip
+          mkdir -p /tmp/artifact
+          unzip -q /tmp/artifact.zip -d /tmp/artifact
+          ipa="$(find /tmp/artifact -type f -name '*.ipa' | head -n1)"
+          test -n "$ipa"
+          cp "$ipa" /tmp/FlClash-${run_number}-ios-unsigned.ipa
+          echo "RUN_NUMBER=$run_number" >> "$GITHUB_ENV"
+          echo "HEAD_SHA=$head_sha" >> "$GITHUB_ENV"
+      - name: Publish public release asset
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="ios-ipa-${RUN_NUMBER}"
+          gh release create "$tag" \
+            "/tmp/FlClash-${RUN_NUMBER}-ios-unsigned.ipa" \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$HEAD_SHA" \
+            --title "FlClash iOS ${RUN_NUMBER}" \
+            --notes "Unsigned IPA with cloud download speed testing. Build run: https://github.com/${GITHUB_REPOSITORY}/actions/runs/${{ inputs.run_id || github.event.workflow_run.id }}" \
+            --prerelease
