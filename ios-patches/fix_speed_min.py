@@ -21,11 +21,21 @@ import 'package:fl_clash/providers/core.dart';
 import 'package:fl_clash/providers/state.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-// Keep the payload bounded so a slow node cannot hold the whole test forever.
-const int speedTestMaxBytes = 4 * 1024 * 1024;
-const int speedTestTimeoutMs = 30000;
+// Cloud download simulation: every node downloads the same bounded payload
+// through the selected proxy. Fallback sources handle regional blocking.
+const int speedTestMaxBytes = 2 * 1024 * 1024;
+const int speedTestTimeoutMs = 20000;
 const String speedTestUrl =
     'https://speed.cloudflare.com/__down?bytes=$speedTestMaxBytes';
+
+List<String> _cloudSpeedTestUrls() {
+  final cacheBust = DateTime.now().microsecondsSinceEpoch;
+  return [
+    'https://speed.cloudflare.com/__down?bytes=$speedTestMaxBytes&cache=$cacheBust',
+    speedTestUrl,
+    'https://proof.ovh.net/files/10Mb.dat',
+  ];
+}
 
 class ProxySpeedEntry {
   const ProxySpeedEntry({
@@ -84,6 +94,60 @@ class ProxySpeedTest extends Notifier<Map<String, ProxySpeedEntry>> {
     return fastest;
   }
 
+  Future<ProxySpeedEntry?> _probeCloudUrl(
+    String nodeName,
+    String effectiveProxyName,
+    String url,
+  ) async {
+    final result = await ref.read(coreHandlerProvider).probe(
+          ProbeParams(
+            url: url,
+            proxyName: effectiveProxyName,
+            headers: const {
+              'Accept': '*/*',
+              'Accept-Encoding': 'identity',
+              'Cache-Control': 'no-cache',
+            },
+            timeout: speedTestTimeoutMs,
+            maxBody: speedTestMaxBytes,
+          ),
+        );
+    if (result == null) {
+      commonPrint.log('Cloud speed test empty result for $nodeName: $url');
+      return null;
+    }
+    if (result.error?.isNotEmpty ?? false) {
+      commonPrint.log(
+        'Cloud speed test failed for $nodeName: ${result.error} ${result.message}',
+      );
+      return null;
+    }
+    if (result.statusCode < 200 || result.statusCode >= 300) {
+      commonPrint.log(
+        'Cloud speed test HTTP ${result.statusCode} for $nodeName: $url',
+      );
+      return null;
+    }
+
+    final duration = result.duration > 0 ? result.duration : result.delay;
+    if (result.bytes <= 0 || duration <= 0) {
+      commonPrint.log(
+        'Cloud speed test has no metrics for $nodeName: '
+        'bytes=${result.bytes}, duration=$duration',
+      );
+      return null;
+    }
+    return ProxySpeedEntry(
+      proxyName: nodeName,
+      mbps: result.bytes / (1024 * 1024) / (duration / 1000),
+      bytes: result.bytes,
+      durationMs: duration,
+      statusCode: result.statusCode,
+      testUrl: url,
+      testedAt: DateTime.now(),
+    );
+  }
+
   Future<ProxySpeedEntry?> test(Proxy proxy) async {
     final name = proxy.name;
     try {
@@ -94,60 +158,26 @@ class ProxySpeedTest extends Notifier<Map<String, ProxySpeedEntry>> {
       );
       final effectiveProxyName = realState.proxyName;
       if (effectiveProxyName.isEmpty) {
-        commonPrint.log('Speed test skipped for $name: no effective proxy');
+        commonPrint.log('Cloud speed test skipped for $name: no effective proxy');
         return null;
       }
 
-      final result = await ref.read(coreHandlerProvider).probe(
-            ProbeParams(
-              url: speedTestUrl,
-              proxyName: effectiveProxyName,
-              headers: const {
-                'Accept': '*/*',
-                'Cache-Control': 'no-cache',
-              },
-              timeout: speedTestTimeoutMs,
-              maxBody: speedTestMaxBytes,
-            ),
-          );
-      if (result == null) {
-        commonPrint.log('Speed test failed for $name: empty probe result');
-        return null;
+      for (final url in _cloudSpeedTestUrls()) {
+        try {
+          final entry = await _probeCloudUrl(name, effectiveProxyName, url);
+          if (entry != null) {
+            state = {...state, name: entry};
+            return entry;
+          }
+        } catch (error) {
+          commonPrint.log('Cloud speed source failed for $name: $url: $error');
+        }
       }
-      if (result.error?.isNotEmpty ?? false) {
-        commonPrint.log(
-          'Speed test failed for $name: ${result.error} ${result.message}',
-        );
-        return null;
-      }
-      if (result.statusCode < 200 || result.statusCode >= 300) {
-        commonPrint.log(
-          'Speed test failed for $name: HTTP ${result.statusCode}',
-        );
-        return null;
-      }
-
-      final duration = result.duration > 0 ? result.duration : result.delay;
-      if (result.bytes <= 0 || duration <= 0) {
-        commonPrint.log(
-          'Speed test failed for $name: bytes=${result.bytes}, duration=$duration',
-        );
-        return null;
-      }
-      final entry = ProxySpeedEntry(
-        proxyName: name,
-        mbps: result.bytes / (1024 * 1024) / (duration / 1000),
-        bytes: result.bytes,
-        durationMs: duration,
-        statusCode: result.statusCode,
-        testUrl: speedTestUrl,
-        testedAt: DateTime.now(),
-      );
-      state = {...state, name: entry};
-      return entry;
+      commonPrint.log('All cloud speed sources failed for $name');
+      return null;
     } catch (error, stackTrace) {
       commonPrint.log(
-        'Speed test failed for $name: $error\\n$stackTrace',
+        'Cloud speed test failed for $name: $error\\n$stackTrace',
         logLevel: coreFailureLogLevel(error),
       );
       return null;
@@ -200,14 +230,12 @@ rep(
       final fastest = speed.fastestAmong(proxies.map((proxy) => proxy.name));
       if (fastest == null) {
         dialogs.showBanner(
-          '${currentAppLocalizations.downloadSpeedTest} '
-          '${currentAppLocalizations.serviceFailed}',
+          '云端测速 ${currentAppLocalizations.serviceFailed}',
           level: BannerLevel.error,
         );
       } else {
         dialogs.showBanner(
-          '${currentAppLocalizations.downloadSpeedTest} '
-          '${currentAppLocalizations.done}: ${fastest.formatted}',
+          '云端测速 ${currentAppLocalizations.done}: ${fastest.formatted}',
           level: BannerLevel.success,
         );
       }
@@ -250,7 +278,7 @@ rep(
       onPressed: () {
         _proxiesTabKey.currentState?.speedTestCurrentGroup();
       },
-      tooltip: '下载测速',
+      tooltip: '云端测速',
       isLoading: isTesting,
     );
   }
@@ -288,11 +316,11 @@ rep(
       if (style.type == ProxiesType.tab)
         PopupMenuItem(
           glyph: AppGlyphs.speed,
-          label: '下载测速',
+          label: '云端测速',
           section: const PopupMenuSection(),
           onPressed: () {
             _proxiesTabKey.currentState?.speedTestCurrentGroup();
           },
         ),''',
 )
-print('Patched iOS speed test provider, action, UI and diagnostics')
+print('Patched cloud download simulation with fallback sources')
