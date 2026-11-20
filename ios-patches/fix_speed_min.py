@@ -29,8 +29,31 @@ rep('lib/views/proxies/tab.dart','\n  Group? get currentGroup {','''
 
   Group? get currentGroup {''')
 rep('lib/views/proxies/proxies.dart','\n  void _onSearch(String value) {',"""
-  IconButtonData? _buildSpeedAction(){if(!_isTab)return null;return IconButtonData(glyph:AppGlyphs.speed,onPressed:()=>_proxiesTabKey.currentState?.speedTestCurrentGroup(),tooltip:'下载测速',isLoading:ref.watch(speedTestingGroupsProvider).isNotEmpty);}
-
   void _onSearch(String value) {""")
-rep('lib/views/proxies/proxies.dart','      iconActions: [\n        if (_isTab && !picker)','      iconActions: [\n        ?_buildSpeedAction(),\n        if (_isTab && !picker)')
+rep('lib/views/proxies/proxies.dart','''      _optionsMenuItem(
+        glyph: AppGlyphs.textSize,
+        label: appLocalizations.size,
+        options: ProxyCardType.values,
+        value: style.cardType,
+        textOf: (type) => type.label,
+        onSelected: (type) =>
+            _updateStyle((state) => state.copyWith(cardType: type)),
+      ),''','''      _optionsMenuItem(
+        glyph: AppGlyphs.textSize,
+        label: appLocalizations.size,
+        options: ProxyCardType.values,
+        value: style.cardType,
+        textOf: (type) => type.label,
+        onSelected: (type) =>
+            _updateStyle((state) => state.copyWith(cardType: type)),
+      ),
+      if (style.type == ProxiesType.tab)
+        PopupMenuItem(
+          glyph: AppGlyphs.speed,
+          label: '下载测速',
+          section: const PopupMenuSection(),
+          onPressed: () {
+            _proxiesTabKey.currentState?.speedTestCurrentGroup();
+          },
+        ),''')
 print('speed patch applied')
