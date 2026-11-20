@@ -18,3 +18,9 @@ with TemporaryDirectory() as tmp:
  a=Path(tmp)/'prism.tgz'; run(['curl','-fL','--retry','4','https://codeload.github.com/chen08209/prism_ui/tar.gz/6c47901cc80b5325bdb9650579ca2e000a60b39e','-o',str(a)],check=True); shutil.rmtree(prism); prism.mkdir(); run(['tar','xzf',str(a),'-C',str(prism),'--strip-components=1'],check=True)
 # The 0.9.4 UI needs the speed-test entry point from the port.
 run(['python3','ios-patches/fix_speed_min.py'], check=True)
+# v0.9.4 has no downloadSpeedTest localization key; keep the port label stable.
+p=Path('up/lib/providers/actions/proxies.dart')
+s=p.read_text()
+s=s.replace("          '${currentAppLocalizations.downloadSpeedTest} '\n          '${currentAppLocalizations.serviceFailed}',", "          '下载测速 ${currentAppLocalizations.serviceFailed}',")
+s=s.replace("          '${currentAppLocalizations.downloadSpeedTest} '\n          '${currentAppLocalizations.done}: ${fastest.formatted}',", "          '下载测速 ${currentAppLocalizations.done}: ${fastest.formatted}',")
+p.write_text(s)
