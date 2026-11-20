@@ -30,6 +30,8 @@ func TestIOSHTTPProbeWireResponse(t *testing.T) {
             StatusCode int `json:"status-code"`
             Body string `json:"body"`
             Error string `json:"error"`
+            Bytes int64 `json:"bytes"`
+            Duration int64 `json:"duration"`
         } `json:"result"`
     }
     if err := json.Unmarshal(wire, &response); err != nil { t.Fatal(err) }
@@ -38,6 +40,9 @@ func TestIOSHTTPProbeWireResponse(t *testing.T) {
     }
     if response.Result.StatusCode != 403 || response.Result.Body != "01234" {
         t.Fatalf("status/body/cap mismatch: %s", wire)
+    }
+    if response.Result.Bytes != 5 || response.Result.Duration < 0 {
+        t.Fatalf("body metrics mismatch: %s", wire)
     }
     if userAgent != "ios-wire-test" { t.Fatalf("user-agent = %q", userAgent) }
 }
