@@ -10,7 +10,6 @@ def replace(name, old, new):
     path.write_text(source.replace(old, new, 1))
 
 fork = Path(sys.argv[2] if len(sys.argv) > 2 else '.')
-# The provider and common implementation are already supplied by fix.py.
 models = (fork / 'lib/models/core.dart').read_text()
 start = models.index('@freezed\nabstract class ProbeParams ')
 end = models.index('@freezed\nabstract class OutboundIpParams ', start)
@@ -28,8 +27,6 @@ replace('lib/core/interface.dart', '  Future<OutboundIpResult> outboundIp(Outbou
   Future<OutboundIpResult> outboundIp(OutboundIpParams params) {''')
 replace('core/protocol.go', '\tprobeOutboundIPMethod CoreMethod = "probe.outboundIp"', '\tprobeHTTPMethod       CoreMethod = "probe.http"\n\tprobeOutboundIPMethod CoreMethod = "probe.outboundIp"')
 replace('core/method.go', '\tprobeOutboundIPMethod: withArguments(handleOutboundIp),', '\tprobeHTTPMethod:       withArguments(handleHTTPProbe),\n\tprobeOutboundIPMethod: withArguments(handleOutboundIp),')
-
-# v0.9.4 returns the probe body but not its byte count/read duration.
 probe = root / 'core/probe.go'
 s = probe.read_text()
 old_type = '''\tError        string
@@ -81,8 +78,8 @@ old_func = '''func readProbeBody(body io.Reader, maxBody int64, until func(strin
 }
 '''
 new_func = '''func readProbeBody(body io.Reader, maxBody int64, until func(string) bool) string {
-\tbody, _ := readProbeBodyWithCount(body, maxBody, until)
-\treturn body
+\tcontent, _ := readProbeBodyWithCount(body, maxBody, until)
+\treturn content
 }
 
 func readProbeBodyWithCount(body io.Reader, maxBody int64, until func(string) bool) (string, int64) {
@@ -118,37 +115,18 @@ probe.write_text(s)
 
 import "context"
 
-// Keep IP-quality requests on the same tunnel route as outbound-IP probes.
 type HTTPProbeParams struct {
-    URL       string            `json:"url"`
-    ProxyName string            `json:"proxy-name"`
-    Headers   map[string]string `json:"headers"`
-    Timeout   int64             `json:"timeout"`
-    MaxBody   int64             `json:"max-body"`
+    URL string `json:"url"`
+    ProxyName string `json:"proxy-name"`
+    Headers map[string]string `json:"headers"`
+    Timeout int64 `json:"timeout"`
+    MaxBody int64 `json:"max-body"`
 }
 
 func handleHTTPProbe(params *HTTPProbeParams) map[string]any {
-    result := runProbe(context.Background(), probeRequest{
-        url: params.URL,
-        proxyName: params.ProxyName,
-        headers: params.Headers,
-        timeout: timeoutFromMillis(params.Timeout, defaultProbeTimeout),
-        maxBody: params.MaxBody,
-    })
-    if result == nil {
-        return map[string]any{"error": probeErrorTimeout}
-    }
-    return map[string]any{
-        "status-code": result.StatusCode,
-        "delay": result.Delay,
-        "body": result.Body,
-        "url": result.Url,
-        "chains": result.Chains,
-        "error": result.Error,
-        "message": result.Message,
-        "bytes": result.Bytes,
-        "duration": result.Duration,
-    }
+    result := runProbe(context.Background(), probeRequest{url: params.URL, proxyName: params.ProxyName, headers: params.Headers, timeout: timeoutFromMillis(params.Timeout, defaultProbeTimeout), maxBody: params.MaxBody})
+    if result == nil { return map[string]any{"error": probeErrorTimeout} }
+    return map[string]any{"status-code": result.StatusCode, "delay": result.Delay, "body": result.Body, "url": result.Url, "chains": result.Chains, "error": result.Error, "message": result.Message, "bytes": result.Bytes, "duration": result.Duration}
 }
 ''')
 print('Patched IP-quality models and probe.http on Dart and Go sides')
