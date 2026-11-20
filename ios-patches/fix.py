@@ -17,6 +17,7 @@ prism=Path('up/plugins/prism_ui')
 with TemporaryDirectory() as tmp:
  a=Path(tmp)/'prism.tgz'; run(['curl','-fL','--retry','4','https://codeload.github.com/chen08209/prism_ui/tar.gz/6c47901cc80b5325bdb9650579ca2e000a60b39e','-o',str(a)],check=True); shutil.rmtree(prism); prism.mkdir(); run(['tar','xzf',str(a),'-C',str(prism),'--strip-components=1'],check=True)
 run(['python3','ios-patches/fix_speed_min.py'], check=True)
+
 # Keep the existing menu placement from the screenshot; do not add a toolbar action.
 p=Path('up/lib/views/proxies/proxies.dart')
 s=p.read_text()
@@ -27,9 +28,38 @@ if start >= 0:
 s=s.replace('        ?_buildSpeedAction(),\n', '')
 s=s.replace('云端测速', '下载测速')
 p.write_text(s)
-# v0.9.4 has no downloadSpeedTest localization key; keep the port label stable.
+
+# Keep the original visible label; v0.9.4 has no downloadSpeedTest key.
 p=Path('up/lib/providers/actions/proxies.dart')
 s=p.read_text()
 s=s.replace("          '${currentAppLocalizations.downloadSpeedTest} '\n          '${currentAppLocalizations.serviceFailed}',", "          '下载测速 ${currentAppLocalizations.serviceFailed}',")
 s=s.replace("          '${currentAppLocalizations.downloadSpeedTest} '\n          '${currentAppLocalizations.done}: ${fastest.formatted}',", "          '下载测速 ${currentAppLocalizations.done}: ${fastest.formatted}',")
+
+# Give immediate feedback and avoid a null TabController swallowing the tap.
+needle="""      final proxies = group.all
+          .whereMatches(query, (proxy) => proxy.searchFields)
+          .toList();
+      final speed = ref.read(proxySpeedProvider.notifier);"""
+replacement="""      final proxies = group.all
+          .whereMatches(query, (proxy) => proxy.searchFields)
+          .toList();
+      dialogs.showBanner('下载测速开始：${proxies.length} 个节点');
+      final speed = ref.read(proxySpeedProvider.notifier);"""
+assert s.count(needle) == 1
+s=s.replace(needle,replacement,1)
+p.write_text(s)
+
+p=Path('up/lib/views/proxies/tab.dart')
+s=p.read_text()
+old="""  Group? get currentGroup {
+    return _getGroup(_tabController?.index);
+  }"""
+new="""  Group? get currentGroup {
+    final indexed = _getGroup(_tabController?.index);
+    if (indexed != null) return indexed;
+    final name = ref.read(proxiesTabStateProvider).currentGroupName;
+    return name == null ? null : ref.read(groupsProvider).getGroup(name);
+  }"""
+assert s.count(old) == 1
+s=s.replace(old,new,1)
 p.write_text(s)
