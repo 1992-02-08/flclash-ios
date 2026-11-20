@@ -17,10 +17,16 @@ prism=Path('up/plugins/prism_ui')
 with TemporaryDirectory() as tmp:
  a=Path(tmp)/'prism.tgz'; run(['curl','-fL','--retry','4','https://codeload.github.com/chen08209/prism_ui/tar.gz/6c47901cc80b5325bdb9650579ca2e000a60b39e','-o',str(a)],check=True); shutil.rmtree(prism); prism.mkdir(); run(['tar','xzf',str(a),'-C',str(prism),'--strip-components=1'],check=True)
 run(['python3','ios-patches/fix_speed_min.py'], check=True)
-# Keep the existing UI placement and label; only the speed-test backend changes.
-for rel in ('lib/providers/actions/proxies.dart', 'lib/views/proxies/proxies.dart'):
- p=Path('up')/rel
- p.write_text(p.read_text().replace('云端测速', '下载测速'))
+# Keep the existing menu placement from the screenshot; do not add a toolbar action.
+p=Path('up/lib/views/proxies/proxies.dart')
+s=p.read_text()
+start=s.find('  IconButtonData? _buildSpeedAction() {')
+if start >= 0:
+    end=s.index('  void _onSearch(String value) {', start)
+    s=s[:start]+s[end:]
+s=s.replace('        ?_buildSpeedAction(),\n', '')
+s=s.replace('云端测速', '下载测速')
+p.write_text(s)
 # v0.9.4 has no downloadSpeedTest localization key; keep the port label stable.
 p=Path('up/lib/providers/actions/proxies.dart')
 s=p.read_text()
