@@ -45,6 +45,9 @@ jobs:
           cp ios-patches/probe_http_test.go up/core/
       - name: Verify speed patch wiring
         run: python3 tool/ios/test_speed_patch.py
+      - name: Verify Go HTTP probe wire and metrics
+        working-directory: up/core
+        run: go test -count=1 -run '^TestIOSHTTPProbe' .
       - name: Verify Dart syntax with analyzer
         uses: subosito/flutter-action@v2
         with:
