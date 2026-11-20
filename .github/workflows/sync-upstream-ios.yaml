@@ -1,0 +1,93 @@
+name: Sync upstream FlClash iOS port
+on:
+  schedule:
+    - cron: '17 3 * * *'
+  workflow_dispatch:
+    inputs:
+      upstream_tag:
+        description: Upstream stable tag; blank means latest v* tag
+        required: false
+        default: ''
+permissions:
+  contents: write
+  actions: write
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    env:
+      UPSTREAM_REPO: chen08209/FlClash
+      PORT_REPO: 1992-02-08/flclash-ios
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - name: Detect upstream stable tag
+        id: upstream
+        env:
+          REQUESTED_TAG: ${{ inputs.upstream_tag }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if [ -n "$REQUESTED_TAG" ]; then
+            tag="$REQUESTED_TAG"
+          else
+            tag="$(gh api "repos/$UPSTREAM_REPO/tags?per_page=100" --jq '[.[] | select(.name | test("^v[0-9]+\\.[0-9]+\\.[0-9]+$")) | .name] | sort_by(split(".") | map(sub("^v"; "") | tonumber)) | last')"
+          fi
+          test -n "$tag"
+          current="$(cat .upstream-version 2>/dev/null || true)"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "current=$current" >> "$GITHUB_OUTPUT"
+          if [ "$tag" = "$current" ]; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+          echo "Upstream: $current -> $tag"
+      - name: Assemble and apply preserved port
+        if: steps.upstream.outputs.changed == 'true'
+        env:
+          UPSTREAM_TAG: ${{ steps.upstream.outputs.tag }}
+        run: |
+          set -euo pipefail
+          curl -fL --retry 4 "https://codeload.github.com/$UPSTREAM_REPO/tar.gz/refs/tags/$UPSTREAM_TAG" -o /tmp/up.tgz
+          rm -rf up
+          mkdir up
+          tar xzf /tmp/up.tgz -C up --strip-components=1
+          cp -a ios up/ios
+          cp -a tool/ios up/tool/ios
+          cp -a core/cmd/ios up/core/cmd/ios
+          cp core/platform/ios.go up/core/platform/
+          for f in bride.h dns_android.go dns_ios.go; do cp "core/$f" "up/core/$f"; done
+          cp lib/common/startup_trace.dart up/lib/common/
+          for f in NOTICE setup.dart distribute_options.yaml; do cp "$f" up/; done
+          python3 -c "import base64,gzip,pathlib; pathlib.Path('/tmp/port.patch').write_bytes(gzip.decompress(base64.b64decode(pathlib.Path('ios-patches/port.patch.gz.b64').read_text())))"
+          patch -p1 -d up -i /tmp/port.patch
+          mkdir -p up/plugins/prism_ui
+          rm -rf up/core/Clash.Meta
+          git clone --depth 1 -b FlClash https://github.com/chen08209/Clash.Meta.git up/core/Clash.Meta
+          mkdir -p up/core/Clash.Meta/component/ca
+          curl -fL --retry 4 https://curl.se/ca/cacert.pem -o up/core/Clash.Meta/component/ca/ca-certificates.crt
+          python3 ios-patches/fix.py
+          python3 ios-patches/fix_probe_ios.py up
+          python3 ios-patches/fix_rust_ios.py up
+          cp ios-patches/probe_http_test.go up/core/
+      - name: Update upstream pin
+        if: steps.upstream.outputs.changed == 'true'
+        env:
+          UPSTREAM_TAG: ${{ steps.upstream.outputs.tag }}
+        run: printf '%s\n' "$UPSTREAM_TAG" > .upstream-version
+      - name: Commit upstream sync
+        if: steps.upstream.outputs.changed == 'true'
+        env:
+          UPSTREAM_TAG: ${{ steps.upstream.outputs.tag }}
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add .upstream-version
+          git commit -m "ci: sync upstream FlClash $UPSTREAM_TAG"
+          git push
+      - name: Dispatch iOS build
+        if: steps.upstream.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run build-ios-094.yaml --ref main
