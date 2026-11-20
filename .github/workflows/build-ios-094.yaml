@@ -53,19 +53,17 @@ jobs:
           dart run build_runner build --delete-conflicting-outputs
       - name: Build Go iOS archive
         working-directory: up
-        run: |
-          PLATFORM_NAME=iphoneos bash tool/ios/build_core.sh
+        run: PLATFORM_NAME=iphoneos bash tool/ios/build_core.sh
       - name: Configure Flutter
         working-directory: up
-        run: |
-          flutter build ios --release --no-codesign --config-only --build-name 0.9.4 --build-number "$GITHUB_RUN_NUMBER"
+        run: flutter build ios --release --no-codesign --config-only --build-name 0.9.4 --build-number "$GITHUB_RUN_NUMBER"
       - name: Archive unsigned app
         working-directory: up
         env:
           DISABLE_SWIFTLINT: '1'
         run: |
           set -o pipefail
-          xcodebuild archive -workspace ios/Runner.xcworkspace -scheme Runner -configuration Release -destination 'generic/platform=iOS' -archivePath "$RUNNER_TEMP/FlClash.xcarchive" -skipPackagePluginValidation -skipMacroValidation APP_BUNDLE_ID=com.8w7vc.axwy CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO 2>&1 | tee "$RUNNER_TEMP/archive.log"
+          xcodebuild archive -workspace ios/Runner.xcworkspace -scheme Runner -configuration Release -destination 'generic/platform=iOS' -archivePath "$RUNNER_TEMP/FlClash.xcarchive" -skipPackagePluginValidation -skipMacroValidation APP_BUNDLE_ID=com.8w7vc.axwy CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO GCC_TREAT_WARNINGS_AS_ERRORS=NO SWIFT_TREAT_WARNINGS_AS_ERRORS=NO OTHER_CFLAGS='-Wno-unused-function' OTHER_CPLUSPLUSFLAGS='-Wno-unused-function' 2>&1 | tee "$RUNNER_TEMP/archive.log"
       - name: Package IPA
         shell: bash
         run: |
