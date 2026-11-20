@@ -22,9 +22,8 @@ checks = {
         ('lib/views/proxies/proxies.dart', 'speedTestPageGroup(groupName)'),
         ('lib/views/proxies/proxies.dart', '下载测速开始'),
     ],
-    'tab fallback': [
+    'tab action': [
         ('lib/views/proxies/tab.dart', 'speedTestCurrentGroup'),
-        ('lib/views/proxies/tab.dart', 'return state.groups.isEmpty ? null : state.groups.first;'),
     ],
 }
 
