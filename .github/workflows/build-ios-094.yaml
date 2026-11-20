@@ -82,7 +82,12 @@ jobs:
         run: PLATFORM_NAME=iphoneos bash tool/ios/build_core.sh
       - name: Configure Flutter
         working-directory: up
-        run: flutter build ios --release --no-codesign --config-only --build-name "$UPSTREAM_VERSION" --build-number "$GITHUB_RUN_NUMBER"
+        run: |
+          # Keep the App Store build number above the user's known working
+          # 0.9.3 build 42, so installing this IPA actually replaces it.
+          BUILD_NUMBER=$((1000 + GITHUB_RUN_NUMBER))
+          echo "BUILD_NUMBER=$BUILD_NUMBER" >> "$GITHUB_ENV"
+          flutter build ios --release --no-codesign --config-only --build-name "$UPSTREAM_VERSION" --build-number "$BUILD_NUMBER"
       - name: Archive unsigned app
         working-directory: up
         env:
